@@ -43,10 +43,10 @@ function balanceAt(now=new Date()) {
   }
   for(const item of returns) {
     const time=item.createdAt?.toDate ? item.createdAt.toDate().getTime() : null;
-    if(time!==null && time<=now.getTime() && time>due.getTime())
+    if(time!==null && time<=now.getTime() && time>ledgerStart.getTime())
       events.push({time,type:"return",amount:BigInt(item.amount)});
   }
-  events.sort((a,b)=>a.time-b.time || (a.type==="double"?-1:1));
+  events.sort((a,b)=>a.time-b.time || (a.type===b.type?0:a.type==="double"?-1:1));
   let balance=15n;
   for(const event of events) {
     if(event.type==="double") balance*=2n;
