@@ -1,7 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, onSnapshot, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCAIiKncK4Q15quFOwgrTeTAwPYfq9vtGM",
@@ -18,7 +17,6 @@ const LEDGER_START = new Date(2026,10,26,0,0,0,0);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app);
 const provider = new GoogleAuthProvider();
 const $ = id => document.getElementById(id);
 const fmt = n => n.toLocaleString("ru-RU");
@@ -107,6 +105,30 @@ function refreshDebt() {
     }
   }
 }
+async function compressImage(file) {
+  const bitmap=await createImageBitmap(file);
+  const canvas=document.createElement("canvas");
+  const maxSide=1280;
+  const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
+  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const ctx=canvas.getContext("2d");
+  ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
+  bitmap.close?.();
+  let quality=0.82, data=canvas.toDataURL("image/webp",quality);
+  while(data.length>850000 && quality>0.35) {
+    quality-=0.08;
+    data=canvas.toDataURL("image/webp",quality);
+  }
+  if(data.length>850000) {
+    const smaller=document.createElement("canvas");
+    smaller.width=Math.round(canvas.width*0.75);
+    smaller.height=Math.round(canvas.height*0.75);
+    smaller.getContext("2d").drawImage(canvas,0,0,smaller.width,smaller.height);
+    data=smaller.toDataURL("image/jpeg",0.65);
+  }
+  return data;
+}
 function renderComments() {
   const host=$("commentsList"); host.replaceChildren();
   if(!comments.length) {
@@ -159,15 +181,13 @@ $("dailyPhotoForm").addEventListener("submit",async e=>{
   const file=$("dailyPhotoFile").files[0], caption=$("dailyPhotoCaptionInput").value.trim().slice(0,120);
   if(!file) return setMessage("ownerMessage","Сначала выбери фотографию.",true);
   if(!file.type.startsWith("image/")) return setMessage("ownerMessage","Можно загрузить только изображение.",true);
-  if(file.size>5*1024*1024) return setMessage("ownerMessage","Файл слишком большой. Максимум 5 МБ.",true);
+  if(file.size>12*1024*1024) return setMessage("ownerMessage","Исходный файл слишком большой. Максимум 12 МБ.",true);
   try {
-    setMessage("ownerMessage","Загружаю фото...");
-    const safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
-    const path="daily-photo/"+Date.now()+"-"+safeName;
-    const fileRef=ref(storage,path);
-    await uploadBytes(fileRef,file,{contentType:file.type});
-    const url=await getDownloadURL(fileRef);
-    await setDoc(doc(db,"siteContent","dailyPhoto"),{url,path,caption,updatedAt:serverTimestamp(),updatedBy:currentUser.email});
+    setMessage("ownerMessage","Сжимаю фотографию...");
+    const imageData=await compressImage(file);
+    if(imageData.length>850000) return setMessage("ownerMessage","Не удалось достаточно сжать фото. Выбери изображение поменьше.",true);
+    setMessage("ownerMessage","Сохраняю фото в бесплатное хранилище Firestore...");
+    await setDoc(doc(db,"siteContent","dailyPhoto"),{imageData,caption,updatedAt:serverTimestamp(),updatedBy:currentUser.email});
     $("dailyPhotoForm").reset();setMessage("ownerMessage","Фото дня опубликовано. Оно отображается у всех посетителей.");
   } catch(e) {setMessage("ownerMessage","Не удалось опубликовать фото: "+e.message,true);}
 });
@@ -184,7 +204,7 @@ onSnapshot(doc(db,"siteContent","dailyPhoto"),snap=>{
   const frame=$("dailyPhotoFrame"),caption=$("dailyPhotoCaption");
   if(!snap.exists()) {frame.innerHTML='<p class="note">Фото дня пока не опубликовано.</p>';caption.textContent="Публикация администрации KIKIBANI.";return;}
   const data=snap.data();frame.replaceChildren();
-  const img=document.createElement("img");img.src=data.url;img.alt="Фото дня KIKIBANI";frame.append(img);
+  const img=document.createElement("img");img.src=data.imageData;img.alt="Фото дня KIKIBANI";frame.append(img);
   caption.textContent=data.caption||"Публикация администрации KIKIBANI.";
 },e=>setMessage("ownerMessage","Ошибка загрузки фото дня: "+e.message,true));
 onAuthStateChanged(auth,user=>{
